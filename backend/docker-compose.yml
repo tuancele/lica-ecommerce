@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  # 1. DATABASE (Postgres)
+  postgres:
+    image: postgres:15-alpine
+    container_name: lica_db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_password_secret
+      POSTGRES_DB: lica_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - lica_net
+
+  # 2. BACKEND API (Golang)
+  api:
+    build: .
+    container_name: lica_api
+    restart: always
+    depends_on:
+      - postgres
+    ports:
+      - "8080:8080" # Map cổng ra ngoài để Frontend gọi vào
+    environment:
+      - DATABASE_URL=host=postgres user=postgres password=postgres_password_secret dbname=lica_db port=5432 sslmode=disable TimeZone=Asia/Ho_Chi_Minh
+    networks:
+      - lica_net
+
+volumes:
+  postgres_data:
+
+networks:
+  lica_net:
+    driver: bridge
