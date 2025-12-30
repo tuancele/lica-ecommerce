@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  frontend:
+    build: .
+    container_name: lica_frontend
+    restart: always
+    ports:
+      - "80:3000"
+    environment:
+      - NODE_ENV=production

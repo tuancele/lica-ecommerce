@@ -1,0 +1,10 @@
+version: '3.8'
+services:
+  admin_panel:
+    build: .
+    container_name: lica_admin
+    restart: always
+    ports:
+      - "3001:3000"
+    environment:
+      - NODE_ENV=production
