@@ -1,82 +1,94 @@
 package main
 
 import (
-"database/sql"
-"encoding/json"
-"fmt"
-"log"
-"net/http"
-"os"
-"time"
+    "database/sql"
+    "encoding/json"
+    "fmt"
+    "log"
+    "net/http"
+    "os"
 
-"github.com/golang-jwt/jwt/v5"
-_ "github.com/lib/pq"
-"golang.org/x/crypto/bcrypt"
+    _ "github.com/lib/pq"
 )
 
-var jwtKey = []byte(os.Getenv("JWT_SECRET"))
-
-type User struct {
-Username string `json:"username"`
-Password string `json:"password"`
-Email    string `json:"email"`
+// Cấu trúc nhận từ Frontend
+type OrderRequest struct {
+    CustomerName  string `json:"customer_name"`
+    Phone         string `json:"phone"`
+    Address       string `json:"address"`
+    PaymentMethod string `json:"payment_method"`
+    Total         int    `json:"total"`
+    Items         []struct {
+        ID       int    `json:"ID"`
+        Name     string `json:"Name"`
+        Price    int    `json:"Price"`
+        Quantity int    `json:"quantity"`
+    } `json:"items"`
 }
 
 func main() {
-db, err := sql.Open("postgres", os.Getenv("DB_URL"))
-if err != nil {
-log.Fatal(err)
-}
-defer db.Close()
+    connStr := os.Getenv("DATABASE_URL")
+    db, err := sql.Open("postgres", connStr)
+    if err != nil { log.Fatal(err) }
+    defer db.Close()
 
-// 1. Endpoint Kiểm tra (Healthcheck)
-http.HandleFunc("/auth", func(w http.ResponseWriter, r *http.Request) {
-w.Header().Set("Content-Type", "application/json")
-fmt.Fprintf(w, `{"status": "success", "message": "IAM Service is ready"}`)
-})
+    http.HandleFunc("/orders", func(w http.ResponseWriter, r *http.Request) {
+        // CORS setup
+        w.Header().Set("Access-Control-Allow-Origin", "*")
+        w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+        w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+        
+        if r.Method == "OPTIONS" { return }
+        if r.Method != "POST" {
+            http.Error(w, "Method not allowed", 405)
+            return
+        }
 
-// 2. Endpoint Đăng ký
-http.HandleFunc("/auth/register", func(w http.ResponseWriter, r *http.Request) {
-if r.Method != http.MethodPost { return }
-var u User
-if err := json.NewDecoder(r.Body).Decode(&u); err != nil { return }
+        // 1. Parse dữ liệu JSON
+        var req OrderRequest
+        if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+            http.Error(w, err.Error(), 400)
+            return
+        }
 
-hashed, _ := bcrypt.GenerateFromPassword([]byte(u.Password), bcrypt.DefaultCost)
-_, err := db.Exec("INSERT INTO users (username, password, email) VALUES ($1, $2, $3)", u.Username, string(hashed), u.Email)
+        // 2. Lưu vào DB (Transaction để an toàn)
+        tx, err := db.Begin()
+        if err != nil { http.Error(w, err.Error(), 500); return }
 
-w.Header().Set("Content-Type", "application/json")
-if err != nil {
-w.WriteHeader(400)
-fmt.Fprintf(w, `{"status": "error", "message": "Tai khoan da ton tai"}`)
-return
-}
-fmt.Fprintf(w, `{"status": "success", "message": "Dang ky thanh cong"}`)
-})
+        // Insert Order
+        var orderID int
+        err = tx.QueryRow(
+            "INSERT INTO orders (customer_name, phone, address, total_amount, payment_method) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+            req.CustomerName, req.Phone, req.Address, req.Total, req.PaymentMethod,
+        ).Scan(&orderID)
 
-// 3. Endpoint Đăng nhập
-http.HandleFunc("/auth/login", func(w http.ResponseWriter, r *http.Request) {
-if r.Method != http.MethodPost { return }
-var u User
-if err := json.NewDecoder(r.Body).Decode(&u); err != nil { return }
+        if err != nil {
+            tx.Rollback()
+            http.Error(w, "Lỗi lưu đơn hàng: "+err.Error(), 500)
+            return
+        }
 
-var hashedPass string
-err := db.QueryRow("SELECT password FROM users WHERE username=$1", u.Username).Scan(&hashedPass)
+        // Insert Order Items
+        for _, item := range req.Items {
+            _, err = tx.Exec(
+                "INSERT INTO order_items (order_id, product_id, product_name, quantity, price) VALUES ($1, $2, $3, $4, $5)",
+                orderID, item.ID, item.Name, item.Quantity, item.Price,
+            )
+            if err != nil {
+                tx.Rollback()
+                http.Error(w, "Lỗi lưu sản phẩm: "+err.Error(), 500)
+                return
+            }
+        }
 
-w.Header().Set("Content-Type", "application/json")
-if err != nil || bcrypt.CompareHashAndPassword([]byte(hashedPass), []byte(u.Password)) != nil {
-w.WriteHeader(401)
-fmt.Fprintf(w, `{"status": "error", "message": "Sai thong tin"}`)
-return
-}
+        // Commit
+        tx.Commit()
 
-token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-"user": u.Username,
-"exp":  time.Now().Add(time.Hour * 24).Unix(),
-})
-t, _ := token.SignedString(jwtKey)
-fmt.Fprintf(w, `{"status": "success", "token": "%s"}`, t)
-})
+        // Phản hồi thành công
+        w.Header().Set("Content-Type", "application/json")
+        fmt.Fprintf(w, `{"status": "success", "order_id": %d, "message": "Đặt hàng thành công"}`, orderID)
+    })
 
-fmt.Println("IAM Service: Sẵn sàng tại 8080...")
-log.Fatal(http.ListenAndServe(":8080", nil))
+    fmt.Println("Order Service running on :8080")
+    log.Fatal(http.ListenAndServe(":8080", nil))
 }
