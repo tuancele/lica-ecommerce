@@ -1,35 +1,38 @@
-version: '3.8'
-
 services:
-  # 1. Backend (Go)
-  backend:
-    build: ./backend
-    container_name: lica_api
-    restart: always
-    ports:
-      - "8080:8080"
-    environment:
-      - DATABASE_URL=host=postgres user=postgres password=postgres_password_secret dbname=lica_db port=5432 sslmode=disable TimeZone=Asia/Ho_Chi_Minh
-
-  # 2. Frontend (Next.js - Khách)
+  # --- FRONTEND ---
   frontend:
     build: ./frontend
     container_name: lica_web
     restart: always
     ports:
       - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=https://api.lica.vn
 
-  # 3. Admin (Next.js - Quản trị)
-  admin:
-    build: ./admin
-    container_name: lica_admin
+  # --- BACKEND SERVICES ---
+  product-service:
+    build: ./backend/product-service
+    container_name: lica_product
     restart: always
-    ports:
-      - "3001:3000"
+    environment:
+      - DATABASE_URL=host=postgres user=postgres password=postgres_password_secret dbname=lica_db port=5432 sslmode=disable
+    depends_on:
+      - postgres
 
-  # 4. Database (Postgres) - Nếu muốn chạy DB chung
+  order-service:
+    build: ./backend/order-service
+    container_name: lica_order
+    restart: always
+    environment:
+      - DATABASE_URL=host=postgres user=postgres password=postgres_password_secret dbname=lica_db port=5432 sslmode=disable
+    depends_on:
+      - postgres
+
+  # Thêm các dịch vụ khác tương tự (cart-service, iam-service...)
+  
+  # --- INFRASTRUCTURE ---
   postgres:
-    image: postgres:15
+    image: postgres:15-alpine
     container_name: lica_db
     restart: always
     environment:
